@@ -231,11 +231,11 @@ def _install_for_agent(agent_key: str, repo_path: Path) -> bool:
         config = _build_config(repo_path)
         config_json = json.dumps(config)
         subprocess.run(
-            ["claude", "mcp", "remove", "bicameral", "--scope", "local"],
+            ["claude", "mcp", "remove", "bicameral", "--scope", "project"],
             capture_output=True, text=True, timeout=10, cwd=str(repo_path),
         )
         result = subprocess.run(
-            ["claude", "mcp", "add-json", "bicameral", "--scope", "local", config_json],
+            ["claude", "mcp", "add-json", "bicameral", "--scope", "project", config_json],
             capture_output=True, text=True, timeout=10, cwd=str(repo_path),
         )
         if result.returncode == 0:
