@@ -49,6 +49,12 @@ def _detect_repo(hint: str | None = None) -> Path:
     cwd = Path.cwd()
     git_root = _find_git_root(cwd)
 
+    # Non-interactive: use detected git root or cwd
+    if not _is_interactive():
+        if git_root:
+            return git_root
+        return cwd
+
     if git_root:
         answer = input(f"\n  Detected git repo: {git_root}\n  Use this? [Y/n] ").strip().lower()
         if answer in ("", "y", "yes"):
@@ -89,9 +95,23 @@ def _detect_agents() -> list[str]:
     return found
 
 
+def _is_interactive() -> bool:
+    """Check if stdin is a terminal (not piped)."""
+    import sys
+    return sys.stdin.isatty()
+
+
 def _select_agents() -> list[str]:
     """Prompt user to select coding agents."""
     detected = _detect_agents()
+
+    # Non-interactive: auto-install for all detected (or claude as default)
+    if not _is_interactive():
+        if detected:
+            names = ", ".join(AGENTS[a]["name"] for a in detected)
+            print(f"  Auto-detected: {names}")
+            return detected
+        return ["claude"]
 
     if detected:
         names = ", ".join(AGENTS[a]["name"] for a in detected)
