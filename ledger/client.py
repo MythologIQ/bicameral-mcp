@@ -58,7 +58,9 @@ class LedgerClient:
     async def connect(self) -> None:
         self._db = AsyncSurreal(self.url)
         await self._db.connect()
-        if not self.url.startswith("memory://"):
+        # Only sign in for remote servers (ws://, http://) — embedded backends
+        # (memory://, surrealkv://) don't need authentication
+        if self.url.startswith(("ws://", "wss://", "http://", "https://")):
             await self._db.signin({"username": self._username, "password": self._password})
         await self._db.use(self.ns, self.db)
         logger.info("[ledger] connected to %s/%s/%s", self.url, self.ns, self.db)
