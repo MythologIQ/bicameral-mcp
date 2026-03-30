@@ -3,7 +3,7 @@
 Guides the user through selecting a repo and coding agent, then installs
 the MCP server config + skills.
 
-Supports: Claude Code, Cursor
+Supports: Claude Code, Cursor, Codex
 
 Usage: bicameral-mcp setup
        bicameral-mcp setup /path/to/repo
@@ -19,12 +19,20 @@ from pathlib import Path
 AGENTS = {
     "claude": {
         "name": "Claude Code",
+        "config_format": "json",
         "config_path": lambda repo: repo / ".mcp.json",
         "skills": True,
     },
     "cursor": {
         "name": "Cursor",
+        "config_format": "json",
         "config_path": lambda repo: repo / ".cursor" / "mcp.json",
+        "skills": False,
+    },
+    "codex": {
+        "name": "Codex",
+        "config_format": "toml",
+        "config_path": lambda repo: repo / ".codex" / "config.toml",
         "skills": False,
     },
 }
@@ -76,6 +84,8 @@ def _detect_agents() -> list[str]:
         found.append("claude")
     if shutil.which("cursor"):
         found.append("cursor")
+    if shutil.which("codex"):
+        found.append("codex")
     return found
 
 
@@ -90,18 +100,22 @@ def _select_agents() -> list[str]:
         if answer in ("", "y", "yes"):
             return detected
 
+    all_keys = list(AGENTS.keys())
     print("\n  Select coding agents to configure:")
-    print("    1. Claude Code")
-    print("    2. Cursor")
-    print("    3. Both")
-    choice = input("  Choice [1/2/3]: ").strip()
+    for i, key in enumerate(all_keys, 1):
+        print(f"    {i}. {AGENTS[key]['name']}")
+    print(f"    {len(all_keys) + 1}. All")
+    choice = input(f"  Choice [1-{len(all_keys) + 1}]: ").strip()
 
-    if choice == "2":
-        return ["cursor"]
-    elif choice == "3":
-        return ["claude", "cursor"]
-    else:
-        return ["claude"]
+    try:
+        idx = int(choice) - 1
+        if idx == len(all_keys):
+            return all_keys
+        if 0 <= idx < len(all_keys):
+            return [all_keys[idx]]
+    except ValueError:
+        pass
+    return ["claude"]
 
 
 def _detect_runner() -> tuple[str, list[str]]:
@@ -131,10 +145,9 @@ def _build_config(repo_path: Path) -> dict:
     }
 
 
-def _write_mcp_config(repo_path: Path, config_path: Path) -> None:
-    """Write MCP server config to a JSON file."""
+def _write_json_config(repo_path: Path, config_path: Path) -> None:
+    """Write MCP server config to a JSON file (Claude Code / Cursor)."""
     config = _build_config(repo_path)
-
     config_path.parent.mkdir(parents=True, exist_ok=True)
 
     existing = {}
@@ -148,6 +161,46 @@ def _write_mcp_config(repo_path: Path, config_path: Path) -> None:
     config_path.write_text(json.dumps(existing, indent=2) + "\n")
 
 
+def _write_toml_config(repo_path: Path, config_path: Path) -> None:
+    """Write MCP server config to a TOML file (Codex)."""
+    config = _build_config(repo_path)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Build the [mcp_servers.bicameral] TOML section
+    lines = []
+
+    # Read existing content, strip old bicameral section if present
+    if config_path.exists():
+        existing = config_path.read_text()
+        in_bicameral = False
+        for line in existing.splitlines():
+            if line.strip() == "[mcp_servers.bicameral]":
+                in_bicameral = True
+                continue
+            if in_bicameral and line.startswith("["):
+                in_bicameral = False
+            if not in_bicameral:
+                lines.append(line)
+    # Remove trailing blank lines
+    while lines and not lines[-1].strip():
+        lines.pop()
+
+    # Append the bicameral section
+    if lines:
+        lines.append("")
+    lines.append("[mcp_servers.bicameral]")
+    lines.append(f'command = "{config["command"]}"')
+
+    args_str = ", ".join(f'"{a}"' for a in config["args"])
+    lines.append(f"args = [{args_str}]")
+
+    env_parts = ", ".join(f'"{k}" = "{v}"' for k, v in config["env"].items())
+    lines.append(f"env = {{ {env_parts} }}")
+    lines.append("")
+
+    config_path.write_text("\n".join(lines) + "\n")
+
+
 def _install_for_agent(agent_key: str, repo_path: Path) -> bool:
     """Install MCP config for a specific coding agent."""
     agent = AGENTS[agent_key]
@@ -157,7 +210,6 @@ def _install_for_agent(agent_key: str, repo_path: Path) -> bool:
     if agent_key == "claude" and shutil.which("claude"):
         config = _build_config(repo_path)
         config_json = json.dumps(config)
-        # Remove existing, then add
         subprocess.run(
             ["claude", "mcp", "remove", "bicameral", "--scope", "local"],
             capture_output=True, text=True, timeout=10, cwd=str(repo_path),
@@ -170,8 +222,26 @@ def _install_for_agent(agent_key: str, repo_path: Path) -> bool:
             print(f"  {agent['name']}: installed via CLI")
             return True
 
-    # Fallback / Cursor: write config file directly
-    _write_mcp_config(repo_path, config_path)
+    # For Codex, try CLI first
+    if agent_key == "codex" and shutil.which("codex"):
+        config = _build_config(repo_path)
+        env_args = []
+        for k, v in config["env"].items():
+            env_args.extend(["--env", f"{k}={v}"])
+        result = subprocess.run(
+            ["codex", "mcp", "add", "bicameral"] + env_args + ["--"] + [config["command"]] + config["args"],
+            capture_output=True, text=True, timeout=10, cwd=str(repo_path),
+        )
+        if result.returncode == 0:
+            print(f"  {agent['name']}: installed via CLI")
+            return True
+
+    # Fallback: write config file directly
+    if agent.get("config_format") == "toml":
+        _write_toml_config(repo_path, config_path)
+    else:
+        _write_json_config(repo_path, config_path)
+
     print(f"  {agent['name']}: wrote {config_path}")
     return True
 
