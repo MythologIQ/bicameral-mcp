@@ -67,11 +67,17 @@ def _detect_runner() -> tuple[str, list[str]]:
 def _build_config(repo_path: Path) -> dict:
     """Build the MCP server config object."""
     command, args = _detect_runner()
+    # Prepare local data directory
+    data_dir = repo_path / ".bicameral"
+    data_dir.mkdir(parents=True, exist_ok=True)
+
     return {
         "command": command,
         "args": args,
         "env": {
             "REPO_PATH": str(repo_path),
+            "SURREAL_URL": f"surrealkv://{data_dir / 'ledger.db'}",
+            "CODE_LOCATOR_SQLITE_DB": str(data_dir / "code-graph.db"),
         },
     }
 
@@ -153,6 +159,25 @@ def _install_skills(repo_path: Path) -> int:
     return installed
 
 
+def _ensure_gitignore(repo_path: Path) -> None:
+    """Add .bicameral/ to .gitignore if not already there."""
+    gitignore = repo_path / ".gitignore"
+    entry = ".bicameral/"
+
+    if gitignore.exists():
+        content = gitignore.read_text()
+        if entry in content:
+            return
+        if not content.endswith("\n"):
+            content += "\n"
+        content += f"\n# Bicameral MCP local data\n{entry}\n"
+        gitignore.write_text(content)
+    else:
+        gitignore.write_text(f"# Bicameral MCP local data\n{entry}\n")
+
+    print(f"  Added {entry} to .gitignore")
+
+
 def run_setup(repo_hint: str | None = None) -> int:
     """Run the interactive setup wizard."""
     print()
@@ -169,6 +194,9 @@ def run_setup(repo_hint: str | None = None) -> int:
     if command not in ("uvx", "pipx"):
         print(f"\n  Note: using '{command} -m bicameral_mcp' as runner.")
         print("  Install a package runner for zero-install: pip install pipx")
+
+    # Ensure .bicameral/ is gitignored
+    _ensure_gitignore(repo_path)
 
     # Install MCP server config
     print()
