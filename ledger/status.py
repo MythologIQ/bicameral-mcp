@@ -30,9 +30,27 @@ def resolve_symbol_lines(
     Falls back gracefully — if tree-sitter isn't available or the symbol
     isn't found, returns None and the caller uses stored line numbers.
     """
-    content = get_git_content(file_path, 1, 999999, repo_path, ref)
-    if content is None:
-        return None
+    # Get full file content (not a line range)
+    abs_repo = Path(repo_path).resolve()
+    if ref == "working_tree":
+        abs_file = abs_repo / file_path
+        if not abs_file.exists():
+            return None
+        try:
+            content = abs_file.read_text(errors="replace")
+        except OSError:
+            return None
+    else:
+        try:
+            result = subprocess.run(
+                ["git", "show", f"{ref}:{file_path}"],
+                cwd=abs_repo, capture_output=True, text=True, timeout=10,
+            )
+            if result.returncode != 0:
+                return None
+            content = result.stdout
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            return None
 
     try:
         from code_locator.indexing.symbol_extractor import extract_symbols_from_content
@@ -49,14 +67,21 @@ def resolve_symbol_lines(
 
         symbols = extract_symbols_from_content(content, lang, file_path)
         for sym in symbols:
-            if sym.get("name") == symbol_name or sym.get("qualified_name") == symbol_name:
-                return (sym["start_line"], sym["end_line"])
+            name = getattr(sym, "name", None) or (sym.get("name") if isinstance(sym, dict) else None)
+            qname = getattr(sym, "qualified_name", None) or (sym.get("qualified_name") if isinstance(sym, dict) else None)
+            sl = getattr(sym, "start_line", None) or (sym.get("start_line") if isinstance(sym, dict) else None)
+            el = getattr(sym, "end_line", None) or (sym.get("end_line") if isinstance(sym, dict) else None)
+            if name == symbol_name or qname == symbol_name:
+                return (sl, el)
 
         # Try fuzzy: symbol_name might be unqualified
         bare = symbol_name.split(".")[-1] if "." in symbol_name else symbol_name
         for sym in symbols:
-            if sym.get("name") == bare:
-                return (sym["start_line"], sym["end_line"])
+            name = getattr(sym, "name", None) or (sym.get("name") if isinstance(sym, dict) else None)
+            sl = getattr(sym, "start_line", None) or (sym.get("start_line") if isinstance(sym, dict) else None)
+            el = getattr(sym, "end_line", None) or (sym.get("end_line") if isinstance(sym, dict) else None)
+            if name == bare:
+                return (sl, el)
 
     except (ImportError, Exception) as e:
         logger.debug("[status] symbol resolution fallback: %s", e)

@@ -240,12 +240,12 @@ async def test_desync_02_code_changed_hash_mismatch(test_repo):
 
     head = _get_head(test_repo)
 
-    # Ground decision to rate_limiter.py lines 1-6 at current HEAD
+    # Ground decision to check_rate_limit function (lines 3-6)
     payload = _make_payload(
         intent_text="Rate limit is 100 req/min per user",
         file_path="middleware/rate_limiter.py",
         symbol_name="check_rate_limit",
-        start_line=1, end_line=6,
+        start_line=3, end_line=6,
         repo=test_repo, commit_hash=head,
     )
     await ledger.ingest_payload(payload)
