@@ -34,6 +34,11 @@ from ledger.status import compute_content_hash, derive_status, hash_lines
 RESULTS_DIR = Path(__file__).parent.parent / "test-results" / "desync"
 
 
+# ── Auto-configure env so `pytest tests/test_desync_scenarios.py` just works ──
+os.environ.setdefault("USE_REAL_LEDGER", "1")
+os.environ.setdefault("SURREAL_URL", "memory://")
+
+
 # ── Git Repo Helpers ──────────────────────────────────────────────────
 
 def _git(repo_dir: str, *args) -> str:
