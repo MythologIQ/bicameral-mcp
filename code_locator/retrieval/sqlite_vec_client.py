@@ -17,12 +17,16 @@ from ..models import RetrievalResult
 
 logger = logging.getLogger(__name__)
 
-# Test/spec directories — demote their scores (same as other clients)
+# Test/spec files — excluded from grounding candidates
 _TEST_PREFIXES = ("test/", "tests/", "spec/", "__tests__/", "test_", "tests_")
+_TEST_SUFFIXES = ("_test.py", "_test.ts", "_spec.py", "_spec.ts")
 
 
 def _is_test_file(file_path: str) -> bool:
-    return any(file_path.startswith(p) or f"/{p}" in file_path for p in _TEST_PREFIXES)
+    return (
+        any(file_path.startswith(p) or f"/{p}" in file_path for p in _TEST_PREFIXES)
+        or any(file_path.endswith(s) for s in _TEST_SUFFIXES)
+    )
 
 
 class SqliteVecClient:

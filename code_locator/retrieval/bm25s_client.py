@@ -81,8 +81,9 @@ class Bm25sClient(BM25Search):
         k = min(num_results, len(self._doc_ids))
         results, scores = self._bm25.retrieve(tokens, k=k)
 
-        # Patterns for test/spec directories — demote their BM25 scores
+        # Patterns for test/spec files — exclude entirely so they never become grounding candidates
         _TEST_PREFIXES = ("test/", "tests/", "spec/", "__tests__/", "test_", "tests_")
+        _TEST_SUFFIXES = ("_test.py", "_test.ts", "_spec.py", "_spec.ts")
 
         output: list[RetrievalResult] = []
         for i in range(k):
@@ -91,9 +92,9 @@ class Bm25sClient(BM25Search):
             if score <= 0:
                 continue
             file_path = self._doc_ids[doc_idx]
-            # Demote test files so implementation files rank higher
-            if any(file_path.startswith(p) or f"/{p}" in file_path for p in _TEST_PREFIXES):
-                score *= 0.3
+            if any(file_path.startswith(p) or f"/{p}" in file_path for p in _TEST_PREFIXES) \
+                    or any(file_path.endswith(s) for s in _TEST_SUFFIXES):
+                continue
             output.append(
                 RetrievalResult(
                     file_path=file_path,
@@ -103,7 +104,6 @@ class Bm25sClient(BM25Search):
                     method="bm25",
                 )
             )
-        # Re-sort after demotion
         output.sort(key=lambda r: r.score, reverse=True)
         return output
 
