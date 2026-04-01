@@ -36,11 +36,17 @@ def fresh_ledger(monkeypatch, tmp_path):
 
 @pytest.fixture
 def indexed_repo(tmp_path, monkeypatch):
-    """Create a temp repo with source files, build symbol index, return (repo_path, db_path)."""
+    """Create a temp repo with source files, build symbol + BM25 index.
+
+    DB is placed at {repo}/.bicameral/code-graph.db — matching ensure_runtime_env()
+    so get_code_locator() works without extra env overrides.
+    """
     repo = tmp_path / "repo"
     repo.mkdir()
+    bicameral_dir = repo / ".bicameral"
+    bicameral_dir.mkdir()
 
-    # Write a Python file with known symbols
+    # Write Python files with known symbols
     (repo / "payments").mkdir()
     (repo / "payments" / "handler.py").write_text(
         "def process_payment(amount, currency):\n"
@@ -52,12 +58,18 @@ def indexed_repo(tmp_path, monkeypatch):
         "    return {'refunded': True}\n"
     )
 
-    db_path = str(tmp_path / "code-graph.db")
+    db_path = str(bicameral_dir / "code-graph.db")
     monkeypatch.setenv("REPO_PATH", str(repo))
-    monkeypatch.setenv("CODE_LOCATOR_SQLITE_DB", db_path)
+    # Let ensure_runtime_env derive CODE_LOCATOR_SQLITE_DB from REPO_PATH
+    monkeypatch.delenv("CODE_LOCATOR_SQLITE_DB", raising=False)
 
     stats = build_index(str(repo), db_path)
     assert stats.symbols_extracted > 0, "Test setup: no symbols extracted — extractor broken"
+
+    # Build BM25 index so search_code works
+    from code_locator.retrieval.bm25s_client import Bm25sClient
+    bm25 = Bm25sClient()
+    bm25.index(str(repo), str(bicameral_dir))
 
     return str(repo), db_path
 
@@ -129,6 +141,46 @@ async def test_ingest_symbols_field_sets_pending_status(indexed_repo):
     assert matched[0].status == "pending", (
         f"Expected 'pending' after symbol grounding, got '{matched[0].status}'"
     )
+
+
+# ── Bug 1b: auto-ground via BM25 when no symbols provided ─────────────
+
+@pytest.mark.xfail(
+    reason="auto-grounding quality is Silong's P0 — skeleton in place, threshold/search tuning pending",
+    strict=False,
+)
+@pytest.mark.asyncio
+async def test_ingest_text_only_auto_grounds_via_bm25(indexed_repo, monkeypatch):
+    """
+    When neither symbols nor code_regions are provided, ingest should auto-ground
+    via BM25 search on the intent description. This is the transcript-only case.
+    """
+    repo_path, db_path = indexed_repo
+    monkeypatch.setenv("USE_REAL_CODE_LOCATOR", "1")
+
+    payload = {
+        "repo": repo_path,
+        "commit_hash": "HEAD",
+        "mappings": [
+            {
+                "span": {
+                    "text": "payment processing refund logic",
+                    "source_type": "transcript",
+                    "source_ref": "auto-ground-regression",
+                },
+                "intent": "payment processing refund logic",
+                # No symbols, no code_regions — pure text-only ingest
+            }
+        ],
+    }
+
+    result = await handle_ingest(payload)
+
+    assert result.stats.symbols_mapped > 0, (
+        "Text-only ingest did not auto-ground via BM25. "
+        "Expected _auto_ground_via_search to find payments/handler.py and map symbols."
+    )
+    assert result.stats.ungrounded == 0
 
 
 @pytest.mark.asyncio

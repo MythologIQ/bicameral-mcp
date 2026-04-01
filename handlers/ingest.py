@@ -17,6 +17,82 @@ from contracts import IngestResponse, IngestStats, SourceCursorSummary
 logger = logging.getLogger(__name__)
 
 
+# Threshold from Decision Ledger Standard — llm provenance range 0.3–0.7, default gate 0.5.
+# Replaced with eval-calibrated value once Silong's RAG eval runs.
+AUTO_GROUND_THRESHOLD = 0.5
+
+
+def _auto_ground_via_search(mappings: list[dict], repo: str) -> list[dict]:
+    """For mappings with no code_regions and no symbols, run BM25 search on the
+    intent description and backfill code_regions from the top-scoring file's symbols.
+
+    This is the fallback for transcript-only ingestion where no symbol names are known.
+    Uses a hardcoded threshold of 0.5 — replace once eval pins the right value.
+    """
+    db_path = os.getenv("CODE_LOCATOR_SQLITE_DB", "")
+    if not db_path:
+        db_path = str(os.path.join(repo, ".bicameral", "code-graph.db"))
+
+    try:
+        from adapters.code_locator import get_code_locator
+        from code_locator.indexing.sqlite_store import SymbolDB
+        locator = get_code_locator()
+        db = SymbolDB(db_path)
+    except Exception as exc:
+        logger.warning("[ingest] auto-ground unavailable: %s", exc)
+        return mappings
+
+    resolved = []
+    for mapping in mappings:
+        if mapping.get("code_regions") or mapping.get("symbols"):
+            resolved.append(mapping)
+            continue
+
+        description = mapping.get("intent") or (mapping.get("span") or {}).get("text", "")
+        if not description:
+            resolved.append(mapping)
+            continue
+
+        try:
+            hits = locator.search_code(description)
+        except Exception as exc:
+            logger.warning("[ingest] search_code failed for '%s': %s", description[:60], exc)
+            resolved.append(mapping)
+            continue
+
+        # Take the top hit above threshold — file-level BM25, so we expand to its symbols
+        top = next((h for h in hits if h.get("score", 0) >= AUTO_GROUND_THRESHOLD), None)
+        if not top:
+            logger.debug("[ingest] no confident match for: %s", description[:60])
+            resolved.append(mapping)
+            continue
+
+        file_path = top["file_path"]
+        symbols = db.lookup_by_file(file_path)
+        if not symbols:
+            resolved.append(mapping)
+            continue
+
+        code_regions = [
+            {
+                "symbol": row["qualified_name"] or row["name"],
+                "file_path": row["file_path"],
+                "start_line": row["start_line"],
+                "end_line": row["end_line"],
+                "type": row["type"],
+                "purpose": description,
+            }
+            for row in symbols[:5]  # cap at 5 symbols per file
+        ]
+        logger.info(
+            "[ingest] auto-grounded '%s' → %s (%d symbols, score=%.2f)",
+            description[:60], file_path, len(code_regions), top["score"],
+        )
+        resolved.append({**mapping, "code_regions": code_regions})
+
+    return resolved
+
+
 def _resolve_symbols_to_regions(payload: dict, repo: str) -> dict:
     """For each mapping with symbols[] but no code_regions, look up symbol names
     in the code graph and populate code_regions from the results."""
@@ -88,6 +164,8 @@ async def handle_ingest(
 
     repo = str(payload.get("repo") or os.getenv("REPO_PATH", "."))
     payload = _resolve_symbols_to_regions(payload, repo)
+    mappings = _auto_ground_via_search(payload.get("mappings") or [], repo)
+    payload = {**payload, "mappings": mappings}
     result = await ledger.ingest_payload(payload)
 
     cursor_summary = None
