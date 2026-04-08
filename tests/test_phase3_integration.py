@@ -337,9 +337,9 @@ async def test_decision_undocumented__status_surfaces_ungrounded():
                 "speaker": "Jin",
             },
             {
-                "text": "We should add Slack integration to auto-ingest channel messages as decisions",
-                "intent": "Slack integration for automatic decision ingestion",
-                "search": None,  # ungrounded — not built yet
+                "text": "We should add quarterly OKR calibration to surface misaligned priorities",
+                "intent": "Quarterly OKR calibration for priority alignment",
+                "search": None,  # ungrounded — no matching code exists
                 "speaker": "Silong",
             },
         ],
@@ -351,8 +351,8 @@ async def test_decision_undocumented__status_surfaces_ungrounded():
     _dump("03_undocumented_ingest", _response_dict(ingest_result))
 
     assert ingest_result.stats.ungrounded >= 1
-    assert any("slack" in u.lower() for u in ingest_result.ungrounded_intents), (
-        f"Expected 'Slack integration' in ungrounded list, got: {ingest_result.ungrounded_intents}"
+    assert any("okr" in u.lower() for u in ingest_result.ungrounded_intents), (
+        f"Expected 'OKR calibration' in ungrounded list, got: {ingest_result.ungrounded_intents}"
     )
 
     status = await handle_decision_status(filter="all")
@@ -507,9 +507,9 @@ async def test_full_lifecycle_graph_integrity():
                 "speaker": "Jin",
             },
             {
-                "text": "Multi-repo support is deferred to Phase 3 — not building it now",
-                "intent": "Multi-repo support deferred (Phase 3)",
-                "search": None,  # ungrounded
+                "text": "Quarterly OKR calibration to surface misaligned priorities across teams",
+                "intent": "Quarterly OKR calibration for priority alignment",
+                "search": None,  # ungrounded — no matching code exists
                 "speaker": "Jin",
             },
         ],
