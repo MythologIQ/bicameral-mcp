@@ -94,8 +94,8 @@ class Bm25sClient(BM25Search):
             syms = file_symbols.get(rel_path, [])
             if syms:
                 expanded = " ".join(expand_identifiers(s) for s in syms)
-                # Repeat 3x for ~3x TF boost on symbol terms vs file body
-                content = (expanded + "\n") * 3 + content
+                # Repeat 5x for stronger TF boost on symbol terms vs file body
+                content = (expanded + "\n") * 5 + content
             documents.append(content)
             doc_ids.append(rel_path)
 
