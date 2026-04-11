@@ -10,4 +10,9 @@ test-results/
 *.db
 *.pkl
 .DS_Store
-.bicameral/
+
+# Bicameral MCP local data (team mode — events/ is committed)
+.bicameral/local/
+
+# Local MCP config (contains absolute paths)
+.mcp.json
